@@ -1,0 +1,29 @@
+# OpenAI Realtime API 兼容服务器依赖
+
+# Web 框架
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+websockets>=12.0
+
+# 异步支持
+asyncio-mqtt>=0.16.0
+
+# 音频处理
+numpy>=1.24.0
+scipy>=1.11.0  # 可选，用于高质量重采样
+
+# 可选：高质量音频重采样
+# soxr>=0.3.0  # 需要系统安装 libsoxr
+
+# 可选：实际的 AI 服务（根据需要启用）
+# openai>=1.0.0
+# deepgram-sdk>=3.0.0
+# elevenlabs>=0.2.0
+
+# 开发依赖
+python-dotenv>=1.0.0
+
+# 测试客户端依赖
+# textual>=0.40.0
+# sounddevice>=0.4.6
+# pyaudio>=0.2.13
