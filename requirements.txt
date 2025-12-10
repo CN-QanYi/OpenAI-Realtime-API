@@ -12,6 +12,9 @@ asyncio-mqtt>=0.16.0
 numpy>=1.24.0
 scipy>=1.11.0  # 可选，用于高质量重采样
 
+# Pipecat - 提供 VAD (语音活动检测) 和其他音频处理功能
+pipecat-ai>=0.0.40
+
 # 可选：高质量音频重采样
 # soxr>=0.3.0  # 需要系统安装 libsoxr
 
