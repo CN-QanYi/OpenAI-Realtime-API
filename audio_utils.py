@@ -288,3 +288,109 @@ def generate_silence(duration_ms: int, sample_rate: int = 24000) -> bytes:
 
 # 全局音频转换器实例
 audio_converter = AudioConverter()
+
+
+# ==================== Push-to-Talk 客户端需要的组件 ====================
+
+# 音频常量
+SAMPLE_RATE = 24000  # OpenAI Realtime API 使用 24kHz
+CHANNELS = 1  # 单声道
+
+
+class AudioPlayerAsync:
+    """
+    异步音频播放器
+    用于 Push-to-Talk 客户端播放 AI 返回的音频
+    """
+    
+    def __init__(self, sample_rate: int = SAMPLE_RATE, channels: int = CHANNELS):
+        """
+        初始化音频播放器
+        
+        Args:
+            sample_rate: 采样率
+            channels: 声道数
+        """
+        self.sample_rate = sample_rate
+        self.channels = channels
+        self._buffer: list[bytes] = []
+        self._frame_count = 0
+        self._playing = False
+        self._stream = None
+        self._lock = None
+        
+        # 尝试初始化音频流
+        try:
+            import sounddevice as sd
+            self._sd = sd
+            self._stream = sd.OutputStream(
+                samplerate=sample_rate,
+                channels=channels,
+                dtype='int16',
+                callback=self._audio_callback
+            )
+            self._stream.start()
+            self._playing = True
+        except Exception as e:
+            logger.warning(f"无法初始化音频输出: {e}")
+            self._sd = None
+    
+    def _audio_callback(self, outdata, frames, time, status):
+        """音频流回调函数"""
+        if status:
+            logger.warning(f"音频播放状态: {status}")
+        
+        if self._buffer:
+            data = self._buffer.pop(0)
+            # 将 bytes 转换为 numpy 数组
+            audio_array = np.frombuffer(data, dtype=np.int16)
+            
+            # 确保数据长度匹配
+            if len(audio_array) < frames:
+                # 填充不足的部分
+                padded = np.zeros(frames, dtype=np.int16)
+                padded[:len(audio_array)] = audio_array
+                outdata[:, 0] = padded
+            else:
+                outdata[:, 0] = audio_array[:frames]
+        else:
+            # 没有数据时输出静音
+            outdata.fill(0)
+    
+    def add_data(self, audio_bytes: bytes) -> None:
+        """
+        添加音频数据到播放队列
+        
+        Args:
+            audio_bytes: PCM16 格式的音频数据
+        """
+        self._buffer.append(audio_bytes)
+        self._frame_count += 1
+    
+    def reset_frame_count(self) -> None:
+        """重置帧计数"""
+        self._frame_count = 0
+    
+    def clear(self) -> None:
+        """清空播放队列"""
+        self._buffer.clear()
+        self._frame_count = 0
+    
+    def stop(self) -> None:
+        """停止播放"""
+        if self._stream:
+            self._stream.stop()
+            self._stream.close()
+            self._stream = None
+        self._playing = False
+        self._buffer.clear()
+    
+    @property
+    def is_playing(self) -> bool:
+        """是否正在播放"""
+        return self._playing and len(self._buffer) > 0
+    
+    @property
+    def frame_count(self) -> int:
+        """获取帧计数"""
+        return self._frame_count

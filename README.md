@@ -2,11 +2,12 @@
 
 一个完全复刻 OpenAI Realtime API 协议的本地 WebSocket 服务器，允许你使用本地或第三方模型替代 OpenAI。
 
-## 🎯 项目目标
+## ✨ 特性
 
-- **完全兼容**：对外复刻 OpenAI Realtime API 的协议（URL、JSON 事件格式、音频编码）
-- **可替换后端**：对内使用 Pipecat 管道调用本地或第三方模型（Deepgram、Llama 3、ElevenLabs 等）
-- **零客户端修改**：你的客户端应用只需修改 `baseUrl` 即可连接
+- 🔄 **完全兼容**：对外复刻 OpenAI Realtime API 的协议（URL、JSON 事件格式、音频编码）
+- 🔌 **可替换后端**：对内使用 Pipecat 管道调用本地或第三方模型（Deepgram、Llama 3、ElevenLabs 等）
+- 🚀 **零客户端修改**：你的客户端应用只需修改 `baseUrl` 即可连接
+- 🎙️ **Push-to-Talk 客户端**：提供完整的终端 UI 客户端用于测试和演示
 
 ## 📁 项目结构
 
@@ -17,8 +18,9 @@
 ├── transport.py            # WebSocket Transport 层（协议翻译官）
 ├── pipeline_manager.py     # Pipecat 管道管理器
 ├── realtime_session.py     # 会话生命周期管理
-├── audio_utils.py          # 音频处理工具（重采样等）
-├── test_client.py          # 测试客户端
+├── audio_utils.py          # 音频处理工具（重采样、音频播放等）
+├── push_to_talk_app.py     # Push-to-Talk 终端客户端（推荐）
+├── test_client.py          # 简单测试客户端
 └── requirements.txt        # 依赖列表
 ```
 
@@ -59,24 +61,57 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 python main.py
 ```
 
-### 3. 连接客户端
+### 3. 运行客户端测试
 
-将你的 OpenAI SDK 客户端的 `baseUrl` 修改为：
-```
-ws://localhost:8000/v1/realtime
-```
+#### 方式 1: Push-to-Talk 客户端（推荐）
 
-### 4. 测试服务器
+提供完整的终端 UI 界面，支持按键说话功能：
 
 ```bash
-# 在新的终端窗口中，激活虚拟环境
-.\.venv\Scripts\Activate.ps1
+# 安装客户端依赖
+pip install textual sounddevice
 
+# 在新的终端窗口中运行客户端
+python push_to_talk_app.py
+```
+
+**使用说明：**
+- 按 **K** 键开始录音，再次按 **K** 停止录音
+- 按 **Q** 键退出应用
+- 客户端会自动连接到 `ws://localhost:8000/v1/realtime`
+- 可以在 `push_to_talk_app.py` 中设置 `USE_LOCAL_SERVER = False` 切换到 OpenAI 官方 API
+
+**功能特性：**
+- ✅ 实时显示会话 ID
+- ✅ 录音状态指示器
+- ✅ 实时显示 AI 响应文本
+- ✅ 自动播放 AI 语音响应
+- ✅ 完整的 TUI（终端用户界面）
+
+#### 方式 2: 简单测试客户端
+
+```bash
 # 自动测试模式
 python test_client.py
 
 # 交互模式
 python test_client.py -i
+```
+
+#### 方式 3: 使用 OpenAI SDK
+
+在你的客户端代码中：
+
+```python
+from openai import AsyncOpenAI
+
+client = AsyncOpenAI(
+    base_url="http://localhost:8000/v1",
+    api_key="dummy-key"  # 本地服务器不需要真实 key
+)
+
+async with client.realtime.connect(model="gpt-realtime") as conn:
+    # 你的代码...
 ```
 
 ## 🔧 架构设计
@@ -106,6 +141,11 @@ python test_client.py -i
    - 管理 WebSocket 会话生命周期
    - 协调 Transport 和 Pipeline
 
+4. **音频处理** (`audio_utils.py`)
+   - 音频重采样（24kHz ↔ 16kHz）
+   - 音频缓冲区管理
+   - 异步音频播放器（用于客户端）
+
 ## 📋 支持的事件
 
 ### 客户端 → 服务器
@@ -133,12 +173,45 @@ python test_client.py -i
 | `response.audio_transcript.delta` | 转录增量 |
 | `response.done` | 响应完成 |
 
+## ⚙️ 配置说明
+
+配置文件位于 `config.py`，可以通过修改该文件来自定义服务器行为：
+
+### 音频配置
+```python
+OPENAI_SAMPLE_RATE = 24000  # OpenAI 协议采样率
+INTERNAL_SAMPLE_RATE = 16000  # 内部处理采样率
+```
+
+### 模型配置
+```python
+# LLM 配置
+model = "gpt-4o"  # 可替换为本地模型
+default_instructions = "你是一个有帮助的AI助手。"
+
+# STT 配置
+provider = "deepgram"  # 可选: whisper, azure
+api_key = os.getenv("DEEPGRAM_API_KEY", "")
+
+# TTS 配置
+provider = "elevenlabs"  # 可选: azure, edge
+api_key = os.getenv("ELEVENLABS_API_KEY", "")
+```
+
+### 服务器配置
+```python
+host = "0.0.0.0"
+port = 8000
+ws_path = "/v1/realtime"
+debug = True
+```
+
 ## ⚠️ 注意事项
 
 ### 音频采样率
 - OpenAI 协议使用 **24kHz**
 - 大多数 STT 模型使用 **16kHz**
-- Transport 层自动处理重采样
+- `audio_utils.py` 自动处理重采样
 
 ### VAD 打断
 检测到用户说话时，会发送 `input_audio_buffer.speech_started` 事件，客户端应清空本地音频缓冲区。
@@ -146,13 +219,148 @@ python test_client.py -i
 ### JSON 格式严格性
 `response_id` 和 `item_id` 字段必须存在，使用随机 UUID 填充。
 
+### 客户端音频设备
+`push_to_talk_app.py` 需要麦克风和扬声器支持。如遇问题：
+- Windows: 确保安装了 `sounddevice` 包
+- Mac: 需要 `brew install portaudio`
+- Linux: 需要安装 `portaudio19-dev` 和 `python3-pyaudio`
+
+## 🎬 快速演示
+
+### 1. 启动服务器（终端 1）
+```bash
+python main.py
+```
+输出：
+```
+OpenAI Realtime API 兼容服务器启动
+WebSocket 端点: ws://localhost:8000/v1/realtime
+```
+
+### 2. 启动客户端（终端 2）
+```bash
+python push_to_talk_app.py
+```
+
+### 3. 开始对话
+1. 按 **K** 键开始录音
+2. 说话（例如："你好，今天天气怎么样？"）
+3. 再按 **K** 键停止录音
+4. 等待 AI 响应（文本会显示在界面上，音频会自动播放）
+
+## 🔄 替换为本地/第三方模型
+
+### 修改配置文件
+
+编辑 `config.py` 来使用本地或第三方服务：
+
+#### 1. 使用本地 Whisper（STT）
+```python
+@dataclass
+class STTConfig:
+    provider: str = "whisper"  # 改为 whisper
+    model: str = "base"  # 或 small, medium, large
+    language: str = "zh"
+```
+
+#### 2. 使用 Ollama（LLM）
+```python
+@dataclass
+class LLMConfig:
+    model: str = "llama3:8b"  # 或其他 Ollama 模型
+    api_base: str = "http://localhost:11434"  # Ollama 地址
+    temperature: float = 0.7
+```
+
+#### 3. 使用 Edge TTS（免费 TTS）
+```python
+@dataclass
+class TTSConfig:
+    provider: str = "edge"  # 改为 edge（无需 API key）
+    voice_id: str = "zh-CN-XiaoxiaoNeural"  # 中文语音
+```
+
+### 实现自定义后端
+
+在 `pipeline_manager.py` 中实现你的自定义处理逻辑：
+
+```python
+class PipelineManager:
+    async def process_audio(self, audio_bytes: bytes):
+        # 1. STT: 将音频转为文本
+        text = await your_stt_service.transcribe(audio_bytes)
+        
+        # 2. LLM: 生成回复
+        response = await your_llm_service.generate(text)
+        
+        # 3. TTS: 将文本转为语音
+        audio = await your_tts_service.synthesize(response)
+        
+        return audio, response
+```
+
+## 🐛 故障排除
+
+### 客户端无法连接
+```bash
+# 检查服务器是否运行
+curl http://localhost:8000/health
+
+# 应返回: {"status":"healthy","active_sessions":0}
+```
+
+### 音频设备问题
+```python
+# 测试音频设备
+python -c "import sounddevice as sd; print(sd.query_devices())"
+```
+
+### 模块导入错误
+```bash
+# 重新安装依赖
+pip install --upgrade -r requirements.txt
+```
+
+### WebSocket 连接断开
+- 检查防火墙设置
+- 确保端口 8000 未被占用
+- 查看服务器日志以获取详细错误信息
+
+## 📊 性能优化
+
+### 音频重采样
+- 安装 `soxr` 以获得更高质量的重采样：
+```bash
+pip install soxr
+```
+
+### 减少延迟
+- 调整 `config.py` 中的 VAD 参数
+- 使用更快的本地模型
+- 减小音频缓冲区大小
+
 ## 🔜 后续计划
 
+- [x] 完整的协议实现
+- [x] Push-to-Talk 终端客户端
+- [x] 音频处理和重采样
 - [ ] 集成真实的 STT 服务（Deepgram/Whisper）
 - [ ] 集成真实的 LLM 服务（OpenAI/Ollama）
 - [ ] 集成真实的 TTS 服务（ElevenLabs/Edge TTS）
 - [ ] 支持函数调用
 - [ ] 支持多模态输入
+- [ ] Docker 部署支持
+
+## 🤝 贡献
+
+欢迎提交 Issue 和 Pull Request！
+
+### 开发指南
+1. Fork 本仓库
+2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
+3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
+4. 推送到分支 (`git push origin feature/AmazingFeature`)
+5. 开启 Pull Request
 
 ## 📄 许可证
 
