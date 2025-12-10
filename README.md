@@ -8,6 +8,7 @@
 - 🔌 **可替换后端**：对内使用 Pipecat 管道调用本地或第三方模型（Deepgram、Llama 3、ElevenLabs 等）
 - 🚀 **零客户端修改**：你的客户端应用只需修改 `baseUrl` 即可连接
 - 🎙️ **Push-to-Talk 客户端**：提供完整的终端 UI 客户端用于测试和演示
+- 🎤 **Server VAD 支持**：集成 Pipecat 的 Silero VAD，实现自由麦模式的语音活动检测
 
 ## 📁 项目结构
 
@@ -41,10 +42,16 @@ python -m venv .venv
 source .venv/bin/activate
 
 # 安装依赖（使用清华镜像源，速度更快）
-pip install -i https://pypi.tuna.tsinghua.edu.cn/simple fastapi "uvicorn[standard]" websockets numpy scipy python-dotenv
+pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
 
 # 或方法2: 直接安装（如果网络良好）
 pip install -r requirements.txt
+
+# 核心依赖包括:
+# - fastapi, uvicorn: Web 框架和服务器
+# - websockets: WebSocket 支持
+# - numpy, scipy: 音频处理
+# - pipecat-ai: 提供 Server VAD (Silero VAD) 等音频处理功能
 ```
 
 ### 2. 启动服务器
@@ -183,6 +190,20 @@ OPENAI_SAMPLE_RATE = 24000  # OpenAI 协议采样率
 INTERNAL_SAMPLE_RATE = 16000  # 内部处理采样率
 ```
 
+### VAD 配置（自由麦模式）
+```python
+# VAD 类型: "server_vad" (自由麦) 或 None (按键说话)
+type = "server_vad"
+# 静音检测时长（毫秒），超过此时长认为用户停止说话
+silence_duration_ms = 500
+# VAD 灵敏度阈值 (0.0-1.0)，越高越不敏感
+threshold = 0.5
+# 语音前缀填充时长（毫秒），保留语音开始前的音频
+prefix_padding_ms = 300
+```
+
+**注意**: 自由麦模式需要 Pipecat 提供的 Silero VAD 支持，已包含在 `pipecat-ai` 依赖中。
+
 ### 模型配置
 ```python
 # LLM 配置
@@ -213,8 +234,16 @@ debug = True
 - 大多数 STT 模型使用 **16kHz**
 - `audio_utils.py` 自动处理重采样
 
-### VAD 打断
-检测到用户说话时，会发送 `input_audio_buffer.speech_started` 事件，客户端应清空本地音频缓冲区。
+### VAD 模式
+
+#### Server VAD 模式（自由麦）
+当配置 `turn_detection.type = "server_vad"` 时，服务器会使用 Pipecat 的 Silero VAD 自动检测用户的语音活动：
+- 检测到用户开始说话时，发送 `input_audio_buffer.speech_started` 事件
+- 检测到用户停止说话时，发送 `input_audio_buffer.speech_stopped` 事件
+- 客户端收到 `speech_started` 事件后应立即停止播放 AI 音频，实现打断功能
+
+#### 手动模式（按键说话）
+当配置 `turn_detection = null` 时，需要客户端手动发送 `input_audio_buffer.commit` 来提交音频。
 
 ### JSON 格式严格性
 `response_id` 和 `item_id` 字段必须存在，使用随机 UUID 填充。
@@ -344,6 +373,7 @@ pip install soxr
 - [x] 完整的协议实现
 - [x] Push-to-Talk 终端客户端
 - [x] 音频处理和重采样
+- [x] 集成 Pipecat 提供的 Server VAD (Silero VAD)
 - [ ] 集成真实的 STT 服务（Deepgram/Whisper）
 - [ ] 集成真实的 LLM 服务（OpenAI/Ollama）
 - [ ] 集成真实的 TTS 服务（ElevenLabs/Edge TTS）
