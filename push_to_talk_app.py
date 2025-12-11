@@ -1,20 +1,20 @@
 #!/usr/bin/env uv run
 """
-按键说话 (Push-to-Talk) Realtime API 终端应用
+Realtime API 终端应用 - 自由麦模式
 
 这是一个使用 Textual 框架构建的终端用户界面 (TUI) 应用，
 展示了如何使用 OpenAI Realtime API 进行语音交互。
 
 运行要求:
 - 安装 `uv` 包管理器
-- 设置 `OPENAI_API_KEY` 环境变量
+- 设置 `OPENAI_API_KEY` 环境变量(使用OpenAI时)
 - Mac 系统需要: `brew install portaudio ffmpeg`
 
 运行方式:
-`./examples/realtime/push_to_talk_app.py`
+`python push_to_talk_app.py`
 
 使用说明:
-- 按 K 键开始/停止录音
+- 直接对着麦克风说话，Server VAD 会自动检测语音开始和结束
 - 按 Q 键退出应用
 
 依赖包:
@@ -66,7 +66,7 @@ if USE_LOCAL_SERVER:
     from websockets.asyncio.client import ClientConnection
 else:
     from openai import AsyncOpenAI
-    from openai.types.realtime.session import Session
+    from openai.types.realtime.session import Session  # type: ignore
     from openai.resources.realtime.realtime import AsyncRealtimeConnection
 
 
@@ -81,16 +81,11 @@ class SessionDisplay(Static):
 
 
 class AudioStatusIndicator(Static):
-    """A widget that shows the current audio recording status."""
-
-    is_recording = reactive(False)
+    """A widget that shows the current audio status."""
 
     @override
     def render(self) -> str:
-        status = (
-            "🔴 Recording... (Press K to stop)" if self.is_recording else "⚪ Press K to start recording (Q to quit)"
-        )
-        return status
+        return "🎤 自由麦模式: 持续监听中... (按 Q 退出)"
 
 
 class RealtimeApp(App[None]):
@@ -170,7 +165,6 @@ class RealtimeApp(App[None]):
             self.client = AsyncOpenAI()
         self.audio_player = AudioPlayerAsync()
         self.last_audio_item_id = None
-        self.should_send_audio = asyncio.Event()
         self.connected = asyncio.Event()
 
     @override
@@ -351,9 +345,6 @@ class RealtimeApp(App[None]):
                     await asyncio.sleep(0)
                     continue
 
-                await self.should_send_audio.wait()
-                status_indicator.is_recording = True
-
                 data, _ = stream.read(read_size)
 
                 connection = await self._get_connection()
@@ -367,7 +358,7 @@ class RealtimeApp(App[None]):
                             pass
                         sent_audio = True
                     
-                    # 发送音频数据
+                    # 发送音频数据（自由麦模式下持续发送，Server VAD会自动检测）
                     audio_b64 = base64.b64encode(cast(Any, data)).decode("utf-8")
                     await connection.send(json.dumps({
                         "type": "input_audio_buffer.append",
@@ -390,37 +381,9 @@ class RealtimeApp(App[None]):
 
     async def on_key(self, event: events.Key) -> None:
         """Handle key press events."""
-        if event.key == "enter":
-            self.query_one(Button).press()
-            return
-
         if event.key == "q":
             self.exit()
             return
-
-        if event.key == "k":
-            status_indicator = self.query_one(AudioStatusIndicator)
-            if status_indicator.is_recording:
-                self.should_send_audio.clear()
-                status_indicator.is_recording = False
-
-                if USE_LOCAL_SERVER:
-                    # 本地服务器：手动提交音频缓冲区
-                    conn = await self._get_connection()
-                    await conn.send(json.dumps({"type": "input_audio_buffer.commit"}))
-                    await conn.send(json.dumps({"type": "response.create"}))
-                elif self.session and self.session.turn_detection is None:
-                    # The default in the API is that the model will automatically detect when the user has
-                    # stopped talking and then start responding itself.
-                    #
-                    # However if we're in manual `turn_detection` mode then we need to
-                    # manually tell the model to commit the audio buffer and start responding.
-                    conn = await self._get_connection()
-                    await conn.input_audio_buffer.commit()
-                    await conn.response.create()
-            else:
-                self.should_send_audio.set()
-                status_indicator.is_recording = True
 
 
 if __name__ == "__main__":

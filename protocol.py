@@ -28,7 +28,7 @@ class ClientEventType(str, Enum):
     
     # 音频缓冲区相关
     INPUT_AUDIO_BUFFER_APPEND = "input_audio_buffer.append"
-    INPUT_AUDIO_BUFFER_COMMIT = "input_audio_buffer.commit"
+    INPUT_AUDIO_BUFFER_COMMIT = "input_audio_buffer.commit"  # 已废弃：内置 Server VAD 自动检测，不需要手动提交
     INPUT_AUDIO_BUFFER_CLEAR = "input_audio_buffer.clear"
     
     # 对话相关

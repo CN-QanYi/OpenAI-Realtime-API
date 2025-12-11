@@ -68,9 +68,6 @@ class RealtimeSession:
         # 响应创建回调：强制触发响应生成
         self.transport.on_response_create(self._on_response_create)
         
-        # 音频提交回调：手动 VAD 模式下触发处理
-        self.transport.on_audio_commit(self._on_audio_commit)
-        
         # 响应取消回调：取消当前响应
         self.transport.on_response_cancel(self._on_response_cancel)
         
@@ -104,11 +101,21 @@ class RealtimeSession:
         self.state.is_active = True
         
         # 配置管道
+        # 根据不同的 LLM 提供商选择模型名称
+        if config.llm.provider == "openai":
+            llm_model = config.llm.openai_model
+        elif config.llm.provider == "ollama":
+            llm_model = config.llm.ollama_model
+        elif config.llm.provider == "siliconflow":
+            llm_model = config.llm.siliconflow_model
+        else:
+            llm_model = "gpt-4o"  # 默认值
+        
         self.pipeline.configure(
             vad_threshold=config.vad.threshold,
             vad_silence_ms=config.vad.silence_duration_ms,
-            llm_model=config.llm.model,
-            llm_instructions=config.llm.default_instructions,
+            llm_model=llm_model,
+            llm_instructions=config.llm.system_prompt,
             tts_voice="alloy"
         )
         
@@ -158,21 +165,17 @@ class RealtimeSession:
         if session.instructions:
             self.pipeline.update_instructions(session.instructions)
         
-        # 更新 VAD 配置
-        if session.turn_detection:
-            if self.pipeline.vad:
-                self.pipeline.vad.threshold = session.turn_detection.threshold
-                self.pipeline.vad.silence_duration_ms = session.turn_detection.silence_duration_ms
+        # 更新 VAD 配置（Server VAD 始终启用）
+        if session.turn_detection and self.pipeline.vad:
+            self.pipeline.vad.threshold = session.turn_detection.threshold
+            self.pipeline.vad.silence_duration_ms = session.turn_detection.silence_duration_ms
+            logger.info(f"VAD 配置已更新: threshold={session.turn_detection.threshold}, silence={session.turn_detection.silence_duration_ms}ms")
         
         logger.info("会话配置已更新")
     
     async def _on_response_create(self):
         """处理响应创建请求"""
         # 强制触发响应生成
-        await self.pipeline.force_response()
-    
-    async def _on_audio_commit(self):
-        """处理音频提交（手动 VAD 模式）"""
         await self.pipeline.force_response()
     
     async def _on_response_cancel(self):

@@ -8,7 +8,13 @@ from typing import Optional, Callable, Awaitable, List, Any
 from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
 
-from config import config
+from config import config, print_config
+from service_providers import (
+    ServiceFactory, 
+    BaseSTTProvider, 
+    BaseLLMProvider, 
+    BaseTTSProvider
+)
 
 logger = logging.getLogger(__name__)
 
@@ -169,12 +175,26 @@ class VADService(BaseService):
 
 
 class STTService(BaseService):
-    """语音转文字服务（模拟）"""
+    """语音转文字服务 - 集成真实的 STT 服务提供商"""
     
     def __init__(self, language: str = "zh-CN"):
         self.language = language
         self._audio_buffer = b''
         self._on_transcription: Optional[Callable[[str], Awaitable[None]]] = None
+        
+        # 从配置创建 STT 提供商
+        self._provider: Optional[BaseSTTProvider] = None
+        try:
+            self._provider = ServiceFactory.create_stt_provider(
+                config.stt.provider,
+                api_key=config.stt.deepgram_api_key,
+                model=config.stt.deepgram_model if config.stt.provider == "deepgram" else config.stt.whisper_model,
+                language=config.stt.deepgram_language
+            )
+            logger.info(f"STT 服务初始化完成: {config.stt.provider}")
+        except Exception as e:
+            logger.warning(f"STT 服务初始化失败，将使用模拟模式: {e}")
+            self._provider = None
     
     def on_transcription(self, callback: Callable[[str], Awaitable[None]]):
         """设置转录回调"""
@@ -186,15 +206,27 @@ class STTService(BaseService):
         if isinstance(frame, UserStoppedSpeakingFrame):
             # 用户停止说话，处理累积的音频
             if self._audio_buffer:
-                # 这里应该调用实际的 STT 服务
-                # 目前返回模拟文本
-                transcription = "[模拟转录文本] 你好，请问有什么可以帮助你的？"
+                transcription = ""
                 
-                if self._on_transcription:
-                    await self._on_transcription(transcription)
+                if self._provider:
+                    # 使用真实的 STT 服务
+                    try:
+                        transcription = await self._provider.transcribe(self._audio_buffer)
+                    except Exception as e:
+                        logger.error(f"STT 转录失败: {e}")
+                        transcription = "[转录失败]"
+                else:
+                    # 回退到模拟模式
+                    transcription = "[模拟转录] 你好，请问有什么可以帮助你的？"
+                
+                if transcription:
+                    if self._on_transcription:
+                        await self._on_transcription(transcription)
+                    
+                    self._audio_buffer = b''
+                    return TranscriptionFrame(text=transcription)
                 
                 self._audio_buffer = b''
-                return TranscriptionFrame(text=transcription)
         
         elif isinstance(frame, InputAudioFrame):
             self._audio_buffer += frame.audio
@@ -203,17 +235,50 @@ class STTService(BaseService):
 
 
 class LLMService(BaseService):
-    """大语言模型服务（模拟）"""
+    """大语言模型服务 - 集成真实的 LLM 服务提供商"""
     
     def __init__(self, model: str = "gpt-4o", 
                  instructions: str = "",
                  temperature: float = 0.7):
         self.model = model
-        self.instructions = instructions
+        self.instructions = instructions or config.llm.system_prompt
         self.temperature = temperature
         self._on_response_start: Optional[Callable[[], Awaitable[None]]] = None
         self._on_response_chunk: Optional[Callable[[str], Awaitable[None]]] = None
         self._on_response_end: Optional[Callable[[str], Awaitable[None]]] = None
+        
+        # 从配置创建 LLM 提供商
+        self._provider: Optional[BaseLLMProvider] = None
+        try:
+            if config.llm.provider == "openai":
+                self._provider = ServiceFactory.create_llm_provider(
+                    "openai",
+                    api_key=config.llm.openai_api_key,
+                    model=config.llm.openai_model,
+                    base_url=config.llm.openai_base_url,
+                    temperature=config.llm.temperature,
+                    max_tokens=config.llm.max_tokens
+                )
+            elif config.llm.provider == "ollama":
+                self._provider = ServiceFactory.create_llm_provider(
+                    "ollama",
+                    base_url=config.llm.ollama_base_url,
+                    model=config.llm.ollama_model,
+                    temperature=config.llm.temperature
+                )
+            elif config.llm.provider == "siliconflow":
+                self._provider = ServiceFactory.create_llm_provider(
+                    "siliconflow",
+                    api_key=config.llm.siliconflow_api_key,
+                    model=config.llm.siliconflow_model,
+                    base_url=config.llm.siliconflow_base_url,
+                    temperature=config.llm.temperature,
+                    max_tokens=config.llm.max_tokens
+                )
+            logger.info(f"LLM 服务初始化完成: {config.llm.provider}")
+        except Exception as e:
+            logger.warning(f"LLM 服务初始化失败，将使用模拟模式: {e}")
+            self._provider = None
     
     def on_response_start(self, callback: Callable[[], Awaitable[None]]):
         self._on_response_start = callback
@@ -239,18 +304,38 @@ class LLMService(BaseService):
         if self._on_response_start:
             await self._on_response_start()
         
-        # 模拟 LLM 响应（实际应调用 OpenAI 或本地模型）
-        response_text = f"你好！我收到了你的消息：「{frame.text}」。作为你的AI助手，我很乐意帮助你。请问有什么具体的问题吗？"
-        
-        # 模拟流式输出
-        chunks = [response_text[i:i+10] for i in range(0, len(response_text), 10)]
         full_response = ""
         
-        for chunk in chunks:
-            full_response += chunk
-            if self._on_response_chunk:
-                await self._on_response_chunk(chunk)
-            await asyncio.sleep(0.05)  # 模拟延迟
+        if self._provider:
+            # 使用真实的 LLM 服务
+            try:
+                async def on_chunk(text: str):
+                    nonlocal full_response
+                    full_response += text
+                    if self._on_response_chunk:
+                        await self._on_response_chunk(text)
+                
+                full_response = await self._provider.generate_stream(
+                    prompt=frame.text,
+                    system_prompt=self.instructions,
+                    on_chunk=on_chunk
+                )
+            except Exception as e:
+                logger.error(f"LLM 生成失败: {e}")
+                full_response = f"抱歉，我遇到了一些问题: {str(e)}"
+                if self._on_response_chunk:
+                    await self._on_response_chunk(full_response)
+        else:
+            # 回退到模拟模式
+            full_response = f"你好！我收到了你的消息：「{frame.text}」。作为你的AI助手，我很乐意帮助你。请问有什么具体的问题吗？"
+            
+            # 模拟流式输出
+            chunks = [full_response[i:i+10] for i in range(0, len(full_response), 10)]
+            
+            for chunk in chunks:
+                if self._on_response_chunk:
+                    await self._on_response_chunk(chunk)
+                await asyncio.sleep(0.05)
         
         if self._on_response_end:
             await self._on_response_end(full_response)
@@ -259,13 +344,41 @@ class LLMService(BaseService):
 
 
 class TTSService(BaseService):
-    """文字转语音服务（模拟）"""
+    """文字转语音服务 - 集成真实的 TTS 服务提供商"""
     
     def __init__(self, voice: str = "alloy", sample_rate: int = 16000):
         self.voice = voice
         self.sample_rate = sample_rate
         self._on_audio_chunk: Optional[Callable[[bytes], Awaitable[None]]] = None
         self._on_audio_end: Optional[Callable[[], Awaitable[None]]] = None
+        
+        # 从配置创建 TTS 提供商
+        self._provider: Optional[BaseTTSProvider] = None
+        try:
+            if config.tts.provider == "elevenlabs":
+                self._provider = ServiceFactory.create_tts_provider(
+                    "elevenlabs",
+                    api_key=config.tts.elevenlabs_api_key,
+                    voice_id=config.tts.elevenlabs_voice_id,
+                    model=config.tts.elevenlabs_model
+                )
+            elif config.tts.provider == "edge_tts":
+                self._provider = ServiceFactory.create_tts_provider(
+                    "edge_tts",
+                    voice=config.tts.edge_tts_voice
+                )
+            elif config.tts.provider == "openai_tts":
+                self._provider = ServiceFactory.create_tts_provider(
+                    "openai_tts",
+                    api_key=config.llm.openai_api_key,
+                    voice=config.tts.openai_tts_voice,
+                    model=config.tts.openai_tts_model,
+                    base_url=config.llm.openai_base_url
+                )
+            logger.info(f"TTS 服务初始化完成: {config.tts.provider}")
+        except Exception as e:
+            logger.warning(f"TTS 服务初始化失败，将使用模拟模式: {e}")
+            self._provider = None
     
     def on_audio_chunk(self, callback: Callable[[bytes], Awaitable[None]]):
         self._on_audio_chunk = callback
@@ -280,32 +393,52 @@ class TTSService(BaseService):
         if not isinstance(frame, LLMResponseFrame):
             return frame
         
-        # 生成模拟音频（正弦波）
-        import numpy as np
+        full_audio = b""
         
-        # 根据文本长度生成相应时长的音频
-        duration_ms = len(frame.text) * 80  # 每个字符约 80ms
-        num_samples = int(self.sample_rate * duration_ms / 1000)
-        
-        # 生成 440Hz 正弦波作为模拟音频
-        t = np.linspace(0, duration_ms / 1000, num_samples, dtype=np.float32)
-        audio_float = np.sin(2 * np.pi * 440 * t) * 0.3
-        audio_int16 = (audio_float * 32767).astype(np.int16)
-        audio_bytes = audio_int16.tobytes()
-        
-        # 分块发送
-        chunk_size = int(self.sample_rate * 0.1) * 2  # 100ms 的数据
-        
-        for i in range(0, len(audio_bytes), chunk_size):
-            chunk = audio_bytes[i:i+chunk_size]
-            if self._on_audio_chunk:
-                await self._on_audio_chunk(chunk)
-            await asyncio.sleep(0.05)
+        if self._provider:
+            # 使用真实的 TTS 服务
+            try:
+                async def on_chunk(audio_data: bytes):
+                    nonlocal full_audio
+                    full_audio += audio_data
+                    if self._on_audio_chunk:
+                        await self._on_audio_chunk(audio_data)
+                
+                full_audio = await self._provider.synthesize_stream(
+                    text=frame.text,
+                    on_audio_chunk=on_chunk
+                )
+            except Exception as e:
+                logger.error(f"TTS 合成失败: {e}")
+                # 生成静音作为回退
+                full_audio = b'\x00' * (self.sample_rate * 2)  # 1 秒静音
+                if self._on_audio_chunk:
+                    await self._on_audio_chunk(full_audio)
+        else:
+            # 回退到模拟模式 - 生成正弦波
+            import numpy as np
+            
+            duration_ms = len(frame.text) * 80
+            num_samples = int(self.sample_rate * duration_ms / 1000)
+            
+            t = np.linspace(0, duration_ms / 1000, num_samples, dtype=np.float32)
+            audio_float = np.sin(2 * np.pi * 440 * t) * 0.3
+            audio_int16 = (audio_float * 32767).astype(np.int16)
+            full_audio = audio_int16.tobytes()
+            
+            # 分块发送
+            chunk_size = int(self.sample_rate * 0.1) * 2
+            
+            for i in range(0, len(full_audio), chunk_size):
+                chunk = full_audio[i:i+chunk_size]
+                if self._on_audio_chunk:
+                    await self._on_audio_chunk(chunk)
+                await asyncio.sleep(0.05)
         
         if self._on_audio_end:
             await self._on_audio_end()
         
-        return TTSAudioFrame(audio=audio_bytes, sample_rate=self.sample_rate)
+        return TTSAudioFrame(audio=full_audio, sample_rate=self.sample_rate)
 
 
 # ==================== 管道管理器 ====================
@@ -445,26 +578,26 @@ class PipelineManager:
         logger.info("管道已停止")
     
     async def push_audio(self, audio_bytes: bytes):
-        """推送音频数据到管道"""
+        """推送音频数据到管道（通过内置 VAD 自动检测）"""
         if not self._running:
             return
         
         frame = InputAudioFrame(audio=audio_bytes)
         
-        # VAD 处理
+        # VAD 自动处理语音活动检测
         if self.vad:
             result = await self.vad.process(frame)
             
-            # 如果检测到语音结束，触发 STT
+            # VAD 检测到语音结束，自动触发完整处理流程
             if isinstance(result, UserStoppedSpeakingFrame):
                 if self.stt:
                     stt_result = await self.stt.process(result)
                     
-                    # STT 完成后触发 LLM
+                    # STT 完成后自动触发 LLM
                     if isinstance(stt_result, TranscriptionFrame) and self.llm:
                         llm_result = await self.llm.process(stt_result)
                         
-                        # LLM 完成后触发 TTS
+                        # LLM 完成后自动触发 TTS
                         if isinstance(llm_result, LLMResponseFrame) and self.tts:
                             await self.tts.process(llm_result)
             
@@ -472,6 +605,9 @@ class PipelineManager:
             elif isinstance(result, (InputAudioFrame, UserStartedSpeakingFrame)):
                 if self.stt:
                     await self.stt.process(frame)
+        else:
+            # 没有 VAD 时直接处理（不应该发生，因为 VAD 是内置的）
+            logger.warning("VAD 未启用，这不应该发生在内置 VAD 模式下")
     
     def update_instructions(self, instructions: str):
         """更新 LLM 系统提示词"""

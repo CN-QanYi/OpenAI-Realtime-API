@@ -61,7 +61,6 @@ class OpenAIRealtimeTransport:
         self._on_audio_frame: Optional[Callable[[bytes], Awaitable[None]]] = None
         self._on_session_update: Optional[Callable[[SessionConfig], Awaitable[None]]] = None
         self._on_response_create: Optional[Callable[[], Awaitable[None]]] = None
-        self._on_audio_commit: Optional[Callable[[], Awaitable[None]]] = None
         self._on_response_cancel: Optional[Callable[[], Awaitable[None]]] = None
         self._on_conversation_item: Optional[Callable[[ConversationItem], Awaitable[None]]] = None
         
@@ -86,11 +85,6 @@ class OpenAIRealtimeTransport:
     def on_response_create(self, callback: Callable[[], Awaitable[None]]):
         """注册响应创建回调"""
         self._on_response_create = callback
-        return self
-    
-    def on_audio_commit(self, callback: Callable[[], Awaitable[None]]):
-        """注册音频提交回调"""
-        self._on_audio_commit = callback
         return self
     
     def on_response_cancel(self, callback: Callable[[], Awaitable[None]]):
@@ -164,7 +158,7 @@ class OpenAIRealtimeTransport:
             handlers = {
                 ClientEventType.SESSION_UPDATE.value: self._handle_session_update,
                 ClientEventType.INPUT_AUDIO_BUFFER_APPEND.value: self._handle_audio_append,
-                ClientEventType.INPUT_AUDIO_BUFFER_COMMIT.value: self._handle_audio_commit,
+                # INPUT_AUDIO_BUFFER_COMMIT 已移除：内置 Server VAD 自动检测，不需要手动提交
                 ClientEventType.INPUT_AUDIO_BUFFER_CLEAR.value: self._handle_audio_clear,
                 ClientEventType.CONVERSATION_ITEM_CREATE.value: self._handle_conversation_item_create,
                 ClientEventType.CONVERSATION_ITEM_TRUNCATE.value: self._handle_conversation_item_truncate,
@@ -271,39 +265,6 @@ class OpenAIRealtimeTransport:
                 
         except Exception as e:
             logger.error(f"音频处理错误: {e}")
-    
-    async def _handle_audio_commit(self, event: Dict[str, Any]) -> None:
-        """处理音频缓冲区提交事件（手动 VAD 模式）"""
-        item_id = generate_id("item")
-        
-        # 发送提交确认
-        await self._send_event(
-            ServerEventBuilder.input_audio_buffer_committed(
-                previous_item_id=self.state.current_item.id if self.state.current_item else None,
-                item_id=item_id
-            )
-        )
-        
-        # 创建用户音频对话项
-        user_item = ConversationItem(
-            id=item_id,
-            type="message",
-            role="user",
-            content=[{"type": "input_audio", "transcript": None}]
-        )
-        
-        await self._send_event(
-            ServerEventBuilder.conversation_item_created(user_item)
-        )
-        
-        # 触发回调
-        if self._on_audio_commit:
-            await self._on_audio_commit()
-        
-        # 清空缓冲区
-        self.audio_buffer.clear()
-        
-        logger.info("音频缓冲区已提交")
     
     async def _handle_audio_clear(self, event: Dict[str, Any]) -> None:
         """处理音频缓冲区清空事件"""

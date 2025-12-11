@@ -17,7 +17,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, Header, HTTP
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from config import config, load_config_from_env
+from config import config, print_config
 from realtime_session import session_manager, RealtimeSession
 
 # 配置日志
@@ -32,11 +32,11 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 启动时
-    load_config_from_env()
     logger.info("=" * 60)
     logger.info("OpenAI Realtime API 兼容服务器启动")
     logger.info(f"WebSocket 端点: ws://localhost:{config.server.port}{config.server.ws_path}")
     logger.info("=" * 60)
+    print_config()  # 打印当前配置
     
     yield
     
