@@ -56,7 +56,37 @@ pip install -r requirements.txt
 # - pipecat-ai: 提供 Server VAD (Silero VAD) 等音频处理功能
 ```
 
-### 2. 启动服务器
+### 2. 配置服务（重要！）
+
+```bash
+# 复制配置文件模板
+cp .env.example .env
+
+# 编辑 .env 文件，配置你的服务
+# Windows:
+notepad .env
+# Linux/Mac:
+nano .env
+```
+
+**推荐配置**（国内用户）：
+```bash
+# 使用硅基流动 LLM（快速且便宜）
+LLM_PROVIDER=siliconflow
+SILICONFLOW_API_KEY=你的_api_key
+SILICONFLOW_MODEL=Qwen/Qwen2.5-7B-Instruct
+
+# 使用 Edge TTS（完全免费）
+TTS_PROVIDER=edge_tts
+EDGE_TTS_VOICE=zh-CN-XiaoxiaoNeural
+```
+
+详细配置说明请查看：
+- [QUICKSTART.md](QUICKSTART.md) - 快速入门指南
+- [SILICONFLOW.md](SILICONFLOW.md) - 硅基流动配置指南
+- [.env.example](.env.example) - 完整配置模板
+
+### 3. 启动服务器
 
 ```bash
 # 确保已激活虚拟环境
@@ -70,7 +100,19 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 python main.py
 ```
 
-### 3. 运行客户端测试
+服务器启动后会显示当前配置：
+```
+==================================================
+当前服务配置:
+==================================================
+STT 服务: deepgram
+LLM 服务: siliconflow
+  - 模型: Qwen/Qwen2.5-7B-Instruct
+TTS 服务: edge_tts
+==================================================
+```
+
+### 4. 运行客户端测试
 
 #### 方式 1: 终端 UI 客户端（推荐）
 
@@ -185,49 +227,108 @@ async with client.realtime.connect(model="gpt-realtime") as conn:
 
 ## ⚙️ 配置说明
 
-配置文件位于 `config.py`，可以通过修改该文件来自定义服务器行为：
+所有配置都通过 `.env` 文件管理，支持以下配置项：
 
-### 音频配置
-```python
-OPENAI_SAMPLE_RATE = 24000  # OpenAI 协议采样率
-INTERNAL_SAMPLE_RATE = 16000  # 内部处理采样率
+### 基础配置
+```bash
+# 服务器配置
+DEBUG=true
+SERVER_HOST=0.0.0.0
+SERVER_PORT=8000
+```
+
+### STT 配置
+```bash
+STT_PROVIDER=deepgram  # 或 openai_whisper, local_whisper
+DEEPGRAM_API_KEY=你的_api_key
+DEEPGRAM_MODEL=nova-2
+DEEPGRAM_LANGUAGE=zh-CN
+```
+
+### LLM 配置
+```bash
+# 硅基流动（推荐）
+LLM_PROVIDER=siliconflow
+SILICONFLOW_API_KEY=你的_api_key
+SILICONFLOW_MODEL=Qwen/Qwen2.5-7B-Instruct
+
+# 或 OpenAI
+# LLM_PROVIDER=openai
+# OPENAI_API_KEY=你的_api_key
+# OPENAI_MODEL=gpt-4o
+
+# 或 Ollama（本地）
+# LLM_PROVIDER=ollama
+# OLLAMA_BASE_URL=http://localhost:11434
+# OLLAMA_MODEL=llama3:8b
+```
+
+### TTS 配置
+```bash
+TTS_PROVIDER=edge_tts  # 或 elevenlabs, openai_tts
+EDGE_TTS_VOICE=zh-CN-XiaoxiaoNeural
 ```
 
 ### VAD 配置（自由麦模式）
-```python
-# VAD 类型: "server_vad" (自由麦) 或 None (按键说话)
-type = "server_vad"
-# 静音检测时长（毫秒），超过此时长认为用户停止说话
-silence_duration_ms = 500
-# VAD 灵敏度阈值 (0.0-1.0)，越高越不敏感
-threshold = 0.5
-# 语音前缀填充时长（毫秒），保留语音开始前的音频
-prefix_padding_ms = 300
+```bash
+VAD_THRESHOLD=0.5  # 灵敏度 (0.0-1.0)，越高越不敏感
+VAD_SILENCE_DURATION_MS=500  # 静音检测时长（毫秒）
+VAD_PREFIX_PADDING_MS=300  # 语音前缀填充（毫秒）
 ```
+
+完整配置选项请查看 [.env.example](.env.example)
 
 **注意**: 自由麦模式需要 Pipecat 提供的 Silero VAD 支持，已包含在 `pipecat-ai` 依赖中。
 
-### 模型配置
-```python
-# LLM 配置
-model = "gpt-4o"  # 可替换为本地模型
-default_instructions = "你是一个有帮助的AI助手。"
+## 🎯 支持的服务
 
-# STT 配置
-provider = "deepgram"  # 可选: whisper, azure
-api_key = os.getenv("DEEPGRAM_API_KEY", "")
+### STT（语音转文字）
+| 服务 | 配置值 | 说明 | API Key |
+|------|--------|------|--------|
+| **Deepgram** 🌟 | `deepgram` | 高质量，每月 200 分钟免费 | 需要 |
+| OpenAI Whisper | `openai_whisper` | OpenAI 官方 API | 需要 |
+| 本地 Whisper | `local_whisper` | 完全免费，需下载模型 | 不需要 |
 
-# TTS 配置
-provider = "elevenlabs"  # 可选: azure, edge
-api_key = os.getenv("ELEVENLABS_API_KEY", "")
+### LLM（语言模型）
+| 服务 | 配置值 | 说明 | API Key |
+|------|--------|------|--------|
+| **硅基流动** 🌟 | `siliconflow` | 国内访问快，价格约 OpenAI 1/10 | 需要 |
+| OpenAI | `openai` | GPT-4o 等模型 | 需要 |
+| Ollama | `ollama` | 本地运行，完全免费 | 不需要 |
+
+### TTS（文字转语音）
+| 服务 | 配置值 | 说明 | API Key |
+|------|--------|------|--------|
+| **Edge TTS** 🌟 | `edge_tts` | 微软 Edge 浏览器 TTS，完全免费 | 不需要 |
+| ElevenLabs | `elevenlabs` | 高质量语音，每月 10000 字符免费 | 需要 |
+| OpenAI TTS | `openai_tts` | OpenAI 官方 TTS | 需要 |
+
+🌟 = 推荐选项
+
+### 推荐组合
+
+**最佳性价比**（推荐）：
+```bash
+STT: Deepgram（每月 200 分钟免费）
+LLM: 硅基流动（¥0.35/M tokens）
+TTS: Edge TTS（完全免费）
+成本: 约 ¥0.05/分钟对话
 ```
 
-### 服务器配置
-```python
-host = "0.0.0.0"
-port = 8000
-ws_path = "/v1/realtime"
-debug = True
+**完全免费**：
+```bash
+STT: 本地 Whisper
+LLM: Ollama
+TTS: Edge TTS
+成本: ¥0（需要本地计算资源）
+```
+
+**高质量**：
+```bash
+STT: Deepgram
+LLM: OpenAI GPT-4o
+TTS: ElevenLabs
+成本: 较高，适合商业应用
 ```
 
 ## ⚠️ 注意事项
